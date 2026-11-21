@@ -8,8 +8,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: unzip -q nova-project.zip
-      - name: Inspect MainActivity lines 335-350
-        run: sed -n '335,350p' NOVA-Launcher-v0.2/app/src/main/java/com/prajay/nova/MainActivity.kt
+      - name: Patch MainActivity.kt focusables error
+        run: |
+          python3 -c '
+          p = "NOVA-Launcher-v0.2/app/src/main/java/com/prajay/nova/MainActivity.kt"
+          lines = open(p).readlines()
+          print("--- BEFORE ---")
+          print("".join(f"{i+1}: {l}" for i, l in enumerate(lines) if 334 <= i <= 349))
+          lines[342] = "// patched focusables\n"
+          lines[343] = "window.decorView.findFocus() ?: window.decorView.requestFocus()\n"
+          open(p, "w").writelines(lines)
+          '
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
