@@ -8,16 +8,97 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: unzip -q nova-project.zip
-      - name: Patch MainActivity.kt focusables error
+      - name: Patch MainActivity and Add At a Glance Header
         run: |
           python3 -c '
-          p = "NOVA-Launcher-v0.2/app/src/main/java/com/prajay/nova/MainActivity.kt"
-          lines = open(p).readlines()
-          print("--- BEFORE ---")
-          print("".join(f"{i+1}: {l}" for i, l in enumerate(lines) if 334 <= i <= 349))
+          import os, re
+
+          base = "NOVA-Launcher-v0.2/app/src/main"
+          manifest = f"{base}/AndroidManifest.xml"
+          kt_file = f"{base}/java/com/prajay/nova/MainActivity.kt"
+
+          # 1. Ensure INTERNET permission is present for weather updates
+          m_txt = open(manifest).read()
+          if "android.permission.INTERNET" not in m_txt:
+              m_txt = m_txt.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\" />\n    <application", 1)
+              open(manifest, "w").write(m_txt)
+
+          # 2. Keep the focusables fix in MainActivity.kt and inject At a Glance overlay
+          lines = open(kt_file).readlines()
           lines[342] = "// patched focusables\n"
           lines[343] = "window.decorView.findFocus() ?: window.decorView.requestFocus()\n"
-          open(p, "w").writelines(lines)
+          code = "".join(lines)
+
+          glance_helper = """
+          private fun attachAtAGlanceHeader() {
+              val decor = window.decorView as? android.view.ViewGroup ?: return
+              if (decor.findViewWithTag<android.view.View>("at_a_glance_bar") != null) return
+
+              val bar = android.widget.LinearLayout(this).apply {
+                  tag = "at_a_glance_bar"
+                  orientation = android.widget.LinearLayout.HORIZONTAL
+                  gravity = android.view.Gravity.CENTER_VERTICAL
+                  setPadding(64, 36, 64, 16)
+              }
+
+              val dateClock = android.widget.TextClock(this).apply {
+                  format12Hour = "EEE, MMM d  •  h:mm a"
+                  format24Hour = "EEE, MMM d  •  HH:mm"
+                  textSize = 20f
+                  setTextColor(android.graphics.Color.WHITE)
+                  typeface = android.graphics.Typeface.DEFAULT_BOLD
+              }
+
+              val weatherView = android.widget.TextView(this).apply {
+                  text = "   |   Loading weather..."
+                  textSize = 20f
+                  setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+              }
+
+              bar.addView(dateClock)
+              bar.addView(weatherView)
+              decor.addView(bar, android.widget.FrameLayout.LayoutParams(
+                  android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                  android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                  android.view.Gravity.TOP
+              ))
+
+              Thread {
+                  try {
+                      val url = java.net.URL("https://api.open-meteo.com/v1/forecast?latitude=17.6805&longitude=74.0183&current=temperature_2m,weather_code")
+                      val json = org.json.JSONObject(url.readText())
+                      val current = json.getJSONObject("current")
+                      val temp = current.getDouble("temperature_2m")
+                      val wCode = current.getInt("weather_code")
+                      val desc = when (wCode) {
+                          0 -> "Clear"
+                          1, 2, 3 -> "Partly Cloudy"
+                          45, 48 -> "Foggy"
+                          51, 53, 55, 61, 63, 65, 80, 81, 82 -> "Rain"
+                          95, 96, 99 -> "Thunderstorm"
+                          else -> "Cloudy"
+                      }
+                      runOnUiThread {
+                          weatherView.text = "   |   ${temp.toInt()}°C  $desc"
+                      }
+                  } catch (e: Exception) {
+                      runOnUiThread {
+                          weatherView.text = ""
+                      }
+                  }
+              }.start()
+          }
+          """
+
+          # Call attachAtAGlanceHeader() inside onResume or onCreate
+          if "override fun onResume()" in code:
+              code = code.replace("super.onResume()", "super.onResume()\n        attachAtAGlanceHeader()", 1)
+          else:
+              code = code.replace("super.onCreate(savedInstanceState)", "super.onCreate(savedInstanceState)\n        window.decorView.post { attachAtAGlanceHeader() }", 1)
+
+          last_brace = code.rfind("}")
+          code = code[:last_brace] + glance_helper + "\n}\n"
+          open(kt_file, "w").write(code)
           '
       - uses: actions/setup-java@v4
         with:
