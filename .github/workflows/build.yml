@@ -8,6 +8,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: unzip -q nova-project.zip
+      - name: Inspect MainActivity lines 335-350
+        run: sed -n '335,350p' NOVA-Launcher-v0.2/app/src/main/java/com/prajay/nova/MainActivity.kt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
